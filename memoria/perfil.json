@@ -1,5 +1,24 @@
 {
-  "visitados": [],
-  "preferencias": {},
-  "historico_perguntas": []
+  "visitados": [
+    {
+      "destino": "Punta Cama",
+      "adicionado_em": "2026-05-21T13:21:53.163058"
+    }
+  ],
+  "preferencias": {
+    "tipo": {
+      "valor": "praia, natureza",
+      "atualizado_em": "2026-05-21T13:21:53.184037"
+    },
+    "duracao": {
+      "valor": "abril",
+      "atualizado_em": "2026-05-21T13:21:53.202698"
+    }
+  },
+  "historico_perguntas": [
+    {
+      "pergunta": "Eu já fui para Punta Cama, amo praia e natureza, quero viajar em abril",
+      "data": "2026-05-21T13:21:32.701933"
+    }
+  ]
 }

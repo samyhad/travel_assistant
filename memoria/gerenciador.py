@@ -12,10 +12,12 @@ o comportamento evolutivo. Em produção, troque por SQLite ou um banco vetorial
 
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 
 CAMINHO_PERFIL = os.path.join(os.path.dirname(__file__), "perfil.json")
+_lock_perfil = threading.Lock()
 
 PERFIL_VAZIO = {
     "visitados": [],          # [{"destino": "Lisboa", "ano": 2022, "nota": 9}]
@@ -28,20 +30,39 @@ PERFIL_VAZIO = {
 # Leitura / escrita base
 # -----------------------------------------------------------------------------
 
-def carregar_perfil() -> dict:
-    """Carrega o perfil do disco. Se não existir, cria um vazio."""
+def _carregar_perfil_sem_lock() -> dict:
+    """Leitura interna — use carregar_perfil() na aplicação."""
     if not os.path.exists(CAMINHO_PERFIL):
-        salvar_perfil(PERFIL_VAZIO.copy())
         return PERFIL_VAZIO.copy()
+
     with open(CAMINHO_PERFIL, "r", encoding="utf-8") as f:
-        return json.load(f)
+        conteudo = f.read().strip()
+
+    if not conteudo:
+        return PERFIL_VAZIO.copy()
+
+    try:
+        return json.loads(conteudo)
+    except json.JSONDecodeError:
+        return PERFIL_VAZIO.copy()
+
+
+def carregar_perfil() -> dict:
+    """Carrega o perfil do disco. Se não existir ou estiver corrompido, cria um vazio."""
+    with _lock_perfil:
+        if not os.path.exists(CAMINHO_PERFIL):
+            salvar_perfil(PERFIL_VAZIO.copy())
+            return PERFIL_VAZIO.copy()
+        return _carregar_perfil_sem_lock()
 
 
 def salvar_perfil(perfil: dict) -> None:
-    """Persiste o perfil no disco."""
+    """Persiste o perfil no disco (escrita atômica para evitar corrupção)."""
     os.makedirs(os.path.dirname(CAMINHO_PERFIL), exist_ok=True)
-    with open(CAMINHO_PERFIL, "w", encoding="utf-8") as f:
+    temp = CAMINHO_PERFIL + ".tmp"
+    with open(temp, "w", encoding="utf-8") as f:
         json.dump(perfil, f, ensure_ascii=False, indent=2)
+    os.replace(temp, CAMINHO_PERFIL)
 
 
 # -----------------------------------------------------------------------------
@@ -50,26 +71,26 @@ def salvar_perfil(perfil: dict) -> None:
 
 def adicionar_visitado(destino: str, ano: Optional[int] = None, nota: Optional[int] = None) -> None:
     """Registra que o usuário visitou um destino."""
-    perfil = carregar_perfil()
+    with _lock_perfil:
+        perfil = _carregar_perfil_sem_lock()
 
-    # Evita duplicatas — atualiza se já existir
-    for v in perfil["visitados"]:
-        if v["destino"].lower() == destino.lower():
-            if ano:
-                v["ano"] = ano
-            if nota:
-                v["nota"] = nota
-            salvar_perfil(perfil)
-            return
+        for v in perfil["visitados"]:
+            if v["destino"].lower() == destino.lower():
+                if ano:
+                    v["ano"] = ano
+                if nota:
+                    v["nota"] = nota
+                salvar_perfil(perfil)
+                return
 
-    entrada = {"destino": destino, "adicionado_em": datetime.now().isoformat()}
-    if ano:
-        entrada["ano"] = ano
-    if nota:
-        entrada["nota"] = nota
+        entrada = {"destino": destino, "adicionado_em": datetime.now().isoformat()}
+        if ano:
+            entrada["ano"] = ano
+        if nota:
+            entrada["nota"] = nota
 
-    perfil["visitados"].append(entrada)
-    salvar_perfil(perfil)
+        perfil["visitados"].append(entrada)
+        salvar_perfil(perfil)
 
 
 def listar_visitados() -> list[str]:
@@ -93,12 +114,19 @@ def salvar_preferencia(chave: str, valor: str) -> None:
                chave="budget", valor="baixo"
                chave="clima", valor="tropical"
     """
-    perfil = carregar_perfil()
-    perfil["preferencias"][chave] = {
-        "valor": valor,
-        "atualizado_em": datetime.now().isoformat(),
-    }
-    salvar_perfil(perfil)
+    with _lock_perfil:
+        perfil = _carregar_perfil_sem_lock()
+        valor_final = valor
+        if chave in perfil["preferencias"]:
+            atual = perfil["preferencias"][chave]["valor"]
+            # Chaves como "tipo" podem ter vários valores (praia, natureza, ...)
+            if chave == "tipo" and valor.lower() not in atual.lower():
+                valor_final = f"{atual}, {valor}"
+        perfil["preferencias"][chave] = {
+            "valor": valor_final,
+            "atualizado_em": datetime.now().isoformat(),
+        }
+        salvar_perfil(perfil)
 
 
 def obter_preferencias() -> dict:
@@ -113,14 +141,14 @@ def obter_preferencias() -> dict:
 
 def registrar_pergunta(pergunta: str) -> None:
     """Salva a pergunta no histórico (mantém os últimos 20 registros)."""
-    perfil = carregar_perfil()
-    perfil["historico_perguntas"].append({
-        "pergunta": pergunta,
-        "data": datetime.now().isoformat(),
-    })
-    # Mantém apenas as 20 mais recentes
-    perfil["historico_perguntas"] = perfil["historico_perguntas"][-20:]
-    salvar_perfil(perfil)
+    with _lock_perfil:
+        perfil = _carregar_perfil_sem_lock()
+        perfil["historico_perguntas"].append({
+            "pergunta": pergunta,
+            "data": datetime.now().isoformat(),
+        })
+        perfil["historico_perguntas"] = perfil["historico_perguntas"][-20:]
+        salvar_perfil(perfil)
 
 
 def resumo_perfil() -> str:
