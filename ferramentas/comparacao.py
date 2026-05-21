@@ -5,7 +5,7 @@ Compara dois ou mais destinos lado a lado em atributos-chave.
 Permite que o agente raciocine sobre trade-offs antes de recomendar.
 """
 
-from langchain.tools import tool
+from langchain_core.tools import tool
 from ferramentas.busca import DESTINOS
 
 

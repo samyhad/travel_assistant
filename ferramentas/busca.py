@@ -9,7 +9,7 @@ O banco de destinos é mockado aqui para focar no comportamento do agente.
 Em produção, substitua por uma chamada a uma API de viagens (Amadeus, Skyscanner, etc.)
 """
 
-from langchain.tools import tool
+from langchain_core.tools import tool
 from memoria import listar_visitados
 
 

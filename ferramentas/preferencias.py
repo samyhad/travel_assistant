@@ -13,7 +13,7 @@ Exemplos de inferência que o agente deve fazer:
   "Prefiro lugares menos turísticos" → save_preference("agitacao, tranquilo")
 """
 
-from langchain.tools import tool
+from langchain_core.tools import tool
 from memoria import salvar_preferencia, obter_preferencias
 
 

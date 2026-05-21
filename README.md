@@ -7,7 +7,7 @@ agente_viagens/
 ├── README.md
 ├── requirements.txt
 ├── main.py                  # Ponto de entrada — loop de conversa
-├── agente.py                # Montagem do agente ReAct
+├── agente.py                # Agente ReAct (LangGraph)
 ├── memoria/
 │   ├── __init__.py
 │   ├── gerenciador.py       # Lê/escreve perfil do usuário em JSON
@@ -24,14 +24,28 @@ agente_viagens/
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY="sua-chave"
+```
+
+Crie um arquivo `.env` na raiz do projeto (já está no `.gitignore`):
+
+```
+OPENAI_API_KEY=sua-chave
+```
+
+No Windows (PowerShell), em vez do `.env` você pode usar:
+
+```powershell
+$env:OPENAI_API_KEY="sua-chave"
 ```
 
 ## Como rodar
 
 ```bash
+pip install -r requirements.txt
 python main.py
 ```
+
+O agente usa **LangChain 1.x** (`create_agent`), que compila um grafo **LangGraph** — API atual recomendada (substitui o `create_react_agent` depreciado). Você pode evoluir com middleware, checkpointing ou nós customizados.
 
 ## O que testar
 

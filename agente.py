@@ -1,56 +1,39 @@
 """
-agente.py — Montagem do agente ReAct
+agente.py — Agente ReAct com LangGraph (via LangChain 1.x)
 
-Aqui acontece a integração entre:
-  - O LLM (raciocínio)
-  - As ferramentas (ações)
-  - A memória (contexto persistente injetado no prompt)
-
-O ponto mais importante desta versão evolutiva é a injeção de contexto:
-antes de cada pergunta, o resumo do perfil do usuário é adicionado ao
-prompt — assim o agente sabe o que já foi visitado e quais são as
-preferências conhecidas sem precisar perguntar de novo.
+Usa create_agent (substituto atual de create_react_agent):
+  - Grafo LangGraph compilado
+  - Middleware extensível para evoluções futuras
+  - Perfil do usuário injetado no system_prompt a cada pergunta
 """
 
 import os
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_anthropic import ChatAnthropic
-from langchain import hub
-from langchain_core.prompts import PromptTemplate
+
+from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 
 from ferramentas import TODAS_AS_FERRAMENTAS
 from memoria import resumo_perfil, registrar_pergunta
 
+load_dotenv()
 
 # -----------------------------------------------------------------------------
 # Modelo
 # -----------------------------------------------------------------------------
 
-llm = ChatAnthropic(
-    model="claude-opus-4-5",
+llm = ChatOpenAI(
+    model="gpt-4o",
     temperature=0,
-    api_key=os.environ["ANTHROPIC_API_KEY"],
+    api_key=os.environ.get("OPENAI_API_KEY"),
 )
 
-# Para OpenAI, substitua por:
-# from langchain_openai import ChatOpenAI
-# llm = ChatOpenAI(model="gpt-4o", temperature=0)
-
-
-# -----------------------------------------------------------------------------
-# Prompt base (ReAct padrão do LangChain Hub)
-# Vamos estender o template padrão para incluir o perfil do usuário.
-# -----------------------------------------------------------------------------
-
-TEMPLATE_COM_PERFIL = """Você é um agente especialista em viagens. Seu objetivo é ajudar o usuário
+PROMPT_SISTEMA = """Você é um agente especialista em viagens. Seu objetivo é ajudar o usuário
 a encontrar o próximo destino ideal com base no histórico e nas preferências dele.
 
 PERFIL DO USUÁRIO (atualizado automaticamente):
 {perfil_usuario}
-
-Você tem acesso às seguintes ferramentas:
-
-{tools}
 
 INSTRUÇÕES IMPORTANTES:
 - Sempre consulte as preferências (get_preferences) antes de buscar destinos.
@@ -59,64 +42,73 @@ INSTRUÇÕES IMPORTANTES:
 - Quando o usuário mencionar preferências (clima, budget, tipo), salve com save_preference.
 - Use search_by_profile para encontrar candidatos, depois compare_destinations para decidir.
 - Suas respostas finais devem incluir: top 3 destinos, justificativa e por que cada um
-  é compatível com o perfil do usuário.
-
-Use o seguinte formato:
-
-Question: a pergunta do usuário
-Thought: o que preciso descobrir ou fazer
-Action: nome da ferramenta (uma de: {tool_names})
-Action Input: entrada para a ferramenta
-Observation: resultado da ferramenta
-... (repita Thought/Action/Observation quantas vezes precisar)
-Thought: agora sei a resposta final
-Final Answer: resposta completa e personalizada para o usuário
-
-Comece!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
+  é compatível com o perfil do usuário."""
 
 
 # -----------------------------------------------------------------------------
-# Fábrica do executor — recriado a cada pergunta para injetar o perfil atual
+# Agente — recriado a cada pergunta para injetar o perfil atual
 # -----------------------------------------------------------------------------
 
-def criar_executor() -> AgentExecutor:
-    """
-    Cria um novo AgentExecutor com o perfil do usuário atualizado.
-    Chamado a cada nova pergunta para garantir que o contexto está fresco.
-    """
-    prompt = PromptTemplate.from_template(TEMPLATE_COM_PERFIL)
-
-    agente = create_react_agent(
-        llm=llm,
+def criar_agente(perfil_usuario: str):
+    """Monta o grafo do agente (LangGraph) com o perfil do usuário no system prompt."""
+    system_prompt = PROMPT_SISTEMA.format(perfil_usuario=perfil_usuario)
+    return create_agent(
+        model=llm,
         tools=TODAS_AS_FERRAMENTAS,
-        prompt=prompt,
-    )
-
-    return AgentExecutor(
-        agent=agente,
-        tools=TODAS_AS_FERRAMENTAS,
-        verbose=True,           # Mostra o loop ReAct no terminal
-        max_iterations=12,      # Mais iterações que o original — perfil evolutivo exige mais ciclos
-        handle_parsing_errors=True,
+        system_prompt=system_prompt,
     )
 
 
-def perguntar(pergunta: str) -> str:
+def _imprimir_mensagem(msg) -> None:
+    """Exibe uma mensagem do grafo no terminal (modo verbose)."""
+    if isinstance(msg, AIMessage):
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                nome = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "?")
+                args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                print(f"  → Ferramenta: {nome}({args})")
+        elif msg.content:
+            trecho = str(msg.content)[:200]
+            if len(str(msg.content)) > 200:
+                trecho += "..."
+            print(f"  → Assistente: {trecho}")
+    elif isinstance(msg, ToolMessage):
+        trecho = str(msg.content)[:300]
+        if len(str(msg.content)) > 300:
+            trecho += "..."
+        print(f"  ← Resultado: {trecho}")
+
+
+def perguntar(pergunta: str, verbose: bool = True) -> str:
     """
-    Interface principal: recebe uma pergunta, injeta o perfil atual,
-    executa o agente e retorna a resposta final.
+    Recebe uma pergunta, injeta o perfil atual, executa o agente
+    e retorna a resposta final do assistente.
     """
     registrar_pergunta(pergunta)
 
     perfil_atual = resumo_perfil()
-    executor = criar_executor()
+    agente = criar_agente(perfil_atual)
+    entrada = {"messages": [HumanMessage(content=pergunta)]}
+    config = {"recursion_limit": 25}
 
-    resultado = executor.invoke({
-        "input": pergunta,
-        "perfil_usuario": perfil_atual,
-    })
+    resultado = None
+    mensagens_exibidas = 0
 
-    return resultado["output"]
+    for estado in agente.stream(entrada, config=config, stream_mode="values"):
+        resultado = estado
+        if verbose:
+            novas = estado["messages"][mensagens_exibidas:]
+            for msg in novas:
+                _imprimir_mensagem(msg)
+            mensagens_exibidas = len(estado["messages"])
+
+    if not resultado:
+        return ""
+
+    mensagens = resultado["messages"]
+    for msg in reversed(mensagens):
+        if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+            return str(msg.content)
+
+    ultima = mensagens[-1]
+    return str(ultima.content) if ultima.content else ""

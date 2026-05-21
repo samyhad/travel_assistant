@@ -6,7 +6,7 @@ save_visited:  registra que o usuário visitou um destino
 list_visited:  lista todos os destinos visitados
 """
 
-from langchain.tools import tool
+from langchain_core.tools import tool
 from memoria import adicionar_visitado, listar_visitados, foi_visitado
 
 
